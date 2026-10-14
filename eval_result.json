@@ -1,0 +1,70 @@
+{
+  "rows": [
+    {
+      "video": "01",
+      "frame": "early",
+      "gt": "坐着",
+      "pred_present": true,
+      "pred_activity": "坐着",
+      "pred_location": "地面",
+      "pred_expression": "平静",
+      "pred_body": "放松",
+      "pred_risk": "低",
+      "followup": false,
+      "confidence": 0.8,
+      "cost": 12.2,
+      "explanation": "不超过20字判断依据：老人坐在地面上，表情平静，肢体状态放松，无明显的其他状态或表面。"
+    },
+    {
+      "video": "01",
+      "frame": "late",
+      "gt": "无人",
+      "pred_present": true,
+      "pred_activity": "坐着",
+      "pred_location": "地面",
+      "pred_expression": "平静",
+      "pred_body": "放松",
+      "pred_risk": "低",
+      "followup": false,
+      "confidence": 0.8,
+      "cost": 14.7,
+      "explanation": "不超过20字判断依据：老人坐在一个椅子上，表面是地面，表情是平静，肢体状态是放松，因此可以确定他正在坐着，而不是躺下或者站立。"
+    },
+    {
+      "video": "02",
+      "frame": "early",
+      "gt": "躺下",
+      "pred_present": true,
+      "pred_activity": "躺下",
+      "pred_location": "地面",
+      "pred_expression": "平静",
+      "pred_body": "静止",
+      "pred_risk": "高",
+      "followup": true,
+      "confidence": 0.8,
+      "cost": 8.7,
+      "explanation": "老人躺在地面上，可能是在休息或者跌倒。"
+    },
+    {
+      "video": "02",
+      "frame": "late",
+      "gt": "无人",
+      "pred_present": true,
+      "pred_activity": "坐着",
+      "pred_location": "地面",
+      "pred_expression": "平静",
+      "pred_body": "放松",
+      "pred_risk": "低",
+      "followup": false,
+      "confidence": 0.8,
+      "cost": 16.5,
+      "explanation": "不超过20字判断依据：老人坐在地面上，表情平静，肢体状态放松，周围环境清晰，没有其他人或物品在视野中，没有明显的行走或躺下的行为，没有其他的活动或状态可以确定。"
+    }
+  ],
+  "metrics": {
+    "activity_acc": 0.5,
+    "lying_recall": 1.0,
+    "upright_fp": 0.0,
+    "absent_recall": 0.0
+  }
+}

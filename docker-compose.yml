@@ -1,0 +1,34 @@
+# 养老监护预警系统 — Ollama 模型服务容器（可选，默认不启用）
+#
+# 定位：把视觉模型服务（llava / qwen2.5vl）与 ROS2 主程序解耦。
+# 适用场景：未来把模型服务迁到独立 GPU 服务器、或做模型版本管理。
+#
+# 为什么默认不启用、也不容器化 ROS2 节点：
+#   1. 本机 ollama 已原生安装并直连 RTX 3050 GPU，容器化会引入 GPU 直通复杂度
+#      （需 WSL2 + NVIDIA Container Toolkit），CPU 兜底会慢 10 倍以上。
+#   2. ROS2 节点是 Windows 原生运行（pixi 版 Humble），容器化需切 Linux 镜像 +
+#      摄像头直通 + 共享内存调优，改动大、收益低，本机直接跑更稳。
+#
+# 若要启用：先启动 Docker Desktop，再 `docker compose up -d`，
+#   主程序无需改代码（ollama 默认连 localhost:11434，容器端口已映射回本机）。
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    # GPU 直通（仅 Linux 容器 + WSL2 + nvidia-container-toolkit 生效；
+    # Windows 原生 GPU 请保持注释，用本机原生 ollama）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_models:

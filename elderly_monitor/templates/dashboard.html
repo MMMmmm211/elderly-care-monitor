@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}告警看板 - 养老监护预警系统{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>告警看板</h1>
+  <div class="row">
+    <div>
+      <h2>系统状态</h2>
+      <p>邮件通道：
+        {% if smtp_ok %}
+          <span class="tag low">已配置</span>
+        {% else %}
+          <span class="tag high">未配置</span>（请到「邮件设置」填写发件邮箱与授权码）
+        {% endif %}
+      </p>
+      <p>联系人数量：<strong>{{ users|length }}</strong></p>
+      <ul style="padding-left:18px;margin:6px 0">
+        {% for u in users %}
+          <li>{{ u['username'] }} — {{ u['email'] }}</li>
+        {% else %}
+          <li class="muted">还没有注册联系人</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h1>告警记录</h1>
+  {% if alerts %}
+  <table>
+    <thead>
+      <tr>
+        <th>时间</th><th>类型</th><th>风险</th><th>描述</th>
+        <th>活动</th><th>位置</th><th>表情</th><th>肢体</th>
+        <th>邮件</th><th>复核</th><th>截图</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in alerts %}
+      <tr>
+        <td class="muted">{{ a['ts'] }}</td>
+        <td>{{ a['alert_type'] }}</td>
+        <td><span class="tag {{ 'high' if a['risk_level']=='高' else ('mid' if a['risk_level']=='中' else 'low') }}">{{ a['risk_level'] }}</span></td>
+        <td>{{ a['description'] }}</td>
+        <td>{{ a['activity'] }}</td>
+        <td>{{ a['location'] }}</td>
+        <td>{{ a['expression'] }}</td>
+        <td>{{ a['body_state'] }}</td>
+        <td class="muted">{{ a['email_status'] }}</td>
+        <td>
+          {% if a['review_status'] == '已确认' %}<span class="tag high">已确认</span>
+          {% elif a['review_status'] == '已排除' %}<span class="tag low">已排除</span>
+          {% else %}<span class="tag mid">待复核</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if a['screenshot_path'] %}
+            <a href="{{ url_for('screenshots', filename=a['screenshot_path'].replace('\\','/').split('/')[-1]) }}" target="_blank">
+              <img class="thumb" src="{{ url_for('screenshots', filename=a['screenshot_path'].replace('\\','/').split('/')[-1]) }}">
+            </a>
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">暂无告警记录。系统运行后，检测到异常会在此展示并推送截图。</p>
+  {% endif %}
+</div>
+{% endblock %}

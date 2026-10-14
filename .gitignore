@@ -1,0 +1,31 @@
+# ============ 敏感数据（严禁提交，含授权码/密码/隐私截图） ============
+data/
+alerts/
+*.db
+*.db-wal
+*.db-shm
+secret_key
+
+# ============ 大体积模型 / 视频 / 中间素材（可另行下载） ============
+models/
+*.task
+test_videos/
+frames/
+e2e_logs/
+e2e_log.jsonl
+*.mp4
+*.avi
+*.mov
+
+# ============ 运行时临时文件 ============
+__pycache__/
+*.pyc
+*.pyo
+supervisor.stop
+*.log
+
+# ============ Python ============
+*.egg-info/
+.venv/
+venv/
+.env

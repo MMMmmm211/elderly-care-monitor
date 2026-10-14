@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>养老监护</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f4f6f9; color: #2c3e50; }
+  .header { position: sticky; top: 0; background: #1f6feb; color: #fff;
+            padding: 14px 16px; display: flex; align-items: center; gap: 12px; z-index: 10; }
+  .header .title { font-size: 17px; font-weight: 700; flex: 1; }
+  .header a { color: #fff; text-decoration: none; font-size: 13px; opacity: .9; }
+  .cam-box { display: flex; align-items: center; justify-content: space-between;
+             background: #fff; margin: 12px; padding: 16px; border-radius: 12px;
+             box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .cam-box .label { font-size: 15px; font-weight: 600; }
+  .cam-box .sub { font-size: 12px; color: #8a97a5; margin-top: 3px; }
+  .switch { position: relative; width: 60px; height: 32px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; cursor: pointer; inset: 0; background: #ccc;
+            border-radius: 32px; transition: .2s; }
+  .slider:before { content: ""; position: absolute; height: 26px; width: 26px;
+            left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+  .switch input:checked + .slider { background: #22c55e; }
+  .switch input:checked + .slider:before { transform: translateX(28px); }
+  .section-title { font-size: 14px; color: #8a97a5; margin: 18px 16px 8px; }
+  .card { background: #fff; margin: 0 12px 10px; padding: 14px; border-radius: 12px;
+          box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .card .top { display: flex; align-items: center; gap: 8px; }
+  .tag { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 12px; }
+  .tag.high { background: #fdeaea; color: #c0392b; }
+  .tag.mid { background: #fff6e5; color: #b7791f; }
+  .tag.low { background: #e6f7e6; color: #1c7c1c; }
+  .card .time { font-size: 12px; color: #8a97a5; margin-left: auto; }
+  .card .desc { font-size: 15px; margin: 8px 0 4px; }
+  .card .meta { font-size: 12px; color: #8a97a5; }
+  .card img { width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid #eef1f5; }
+  .card .mail { font-size: 11px; color: #aab4c0; margin-top: 6px; }
+  .empty { text-align: center; color: #aab4c0; padding: 40px 0; font-size: 14px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; }
+  .dot.off { background: #ccc; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="title">养老监护</div>
+  <a href="{{ url_for('dashboard') }}">桌面版</a>
+  <a href="{{ url_for('logout') }}">退出</a>
+</div>
+
+<div class="cam-box">
+  <div>
+    <div class="label">监控摄像头</div>
+    <div class="sub" id="camStatus">正在读取状态…</div>
+  </div>
+  <label class="switch">
+    <input type="checkbox" id="camSwitch" onchange="toggleCamera()">
+    <span class="slider"></span>
+  </label>
+</div>
+
+<div class="section-title">告警记录</div>
+<div id="alertList"><div class="empty">加载中…</div></div>
+
+<script>
+let camEnabled = true;
+
+const RISK_CLS = {'高':'high', '中':'mid', '低':'low'};
+const REVIEW_CLS = {'已确认':'high', '已排除':'low', '待复核':'mid'};
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    const d = await api('/api/alerts');
+    camEnabled = d.camera_enabled;
+    document.getElementById('camSwitch').checked = camEnabled;
+    document.getElementById('camStatus').textContent =
+      camEnabled ? '监控中 · 正常' : '已暂停监控';
+    renderAlerts(d.alerts);
+  } catch (e) {}
+}
+
+function renderAlerts(alerts) {
+  const box = document.getElementById('alertList');
+  if (!alerts || alerts.length === 0) {
+    box.innerHTML = '<div class="empty">暂无告警记录</div>';
+    return;
+  }
+  box.innerHTML = alerts.map(a => `
+    <div class="card">
+      <div class="top">
+        <span class="tag ${RISK_CLS[a.risk] || 'low'}">${a.risk || ''}</span>
+        ${a.review_status ? `<span class="tag ${REVIEW_CLS[a.review_status] || 'mid'}">${a.review_status}</span>` : ''}
+        <span class="meta">${a.type || ''}</span>
+        <span class="time">${a.ts || ''}</span>
+      </div>
+      <div class="desc">${a.desc || ''}</div>
+      <div class="meta">活动=${a.activity || ''} · 位置=${a.location || ''} · 表情=${a.expression || ''} · 肢体=${a.body_state || ''}</div>
+      ${a.screenshot ? `<a href="/screenshots/${a.screenshot}" target="_blank"><img src="/screenshots/${a.screenshot}" loading="lazy"></a>` : ''}
+      <div class="mail">${a.email_status || ''}</div>
+    </div>
+  `).join('');
+}
+
+async function toggleCamera() {
+  const target = !camEnabled;
+  document.getElementById('camSwitch').checked = target;
+  document.getElementById('camStatus').textContent = '正在切换…';
+  try {
+    const d = await api('/api/camera', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled: target})
+    });
+    camEnabled = d.enabled;
+    document.getElementById('camStatus').textContent =
+      camEnabled ? '监控中 · 正常' : '已暂停监控';
+  } catch (e) {
+    document.getElementById('camSwitch').checked = camEnabled;
+  }
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

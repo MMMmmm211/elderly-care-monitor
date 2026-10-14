@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}注册 - 养老监护预警系统{% endblock %}
+{% block content %}
+<div class="card auth-box">
+  <h1>注册</h1>
+  <p class="muted">注册时填写的邮箱将作为「告警联系人」，老人出现异常时实时截图会推送到该邮箱。</p>
+  <form method="post">
+    <label>用户名</label>
+    <input type="text" name="username" required autofocus>
+    <label>密码</label>
+    <input type="password" name="password" required>
+    <label>联系人邮箱（必填，用于接收告警）</label>
+    <input type="email" name="email" required placeholder="you@example.com">
+    <label>手机号（选填）</label>
+    <input type="text" name="phone" placeholder="选填">
+    <label>性别（选填）</label>
+    <select name="gender">
+      <option value="">不填</option>
+      <option value="男">男</option>
+      <option value="女">女</option>
+    </select>
+    <div style="margin-top:18px">
+      <button type="submit">注册</button>
+    </div>
+  </form>
+  <p class="muted" style="margin-top:16px">已有账号？<a href="{{ url_for('login') }}">去登录</a></p>
+</div>
+{% endblock %}
