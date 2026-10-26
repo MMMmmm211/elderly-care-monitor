@@ -28,15 +28,21 @@ class RiskManager(Node):
     def __init__(self):
         super().__init__('risk_manager')
 
-        self.declare_parameter('watch_sec', 10.0)
-        self.declare_parameter('alert_sec', 20.0)
-        self.declare_parameter('fall_sec', 2.0)
-        self.declare_parameter('squat_sec', 15.0)
-        self.declare_parameter('absent_sec', 15.0)
-        self.declare_parameter('absent_alert_sec', 30.0)
-        self.declare_parameter('recover_sec', 30.0)
-        self.declare_parameter('cooldown_sec', 300.0)
-        self.declare_parameter('night_check_hour', 20.0)
+        # 阈值统一从 config.yaml 的 risk 段读取；命令行 -p 仍可覆盖
+        from app_config import section
+        cfg = section('risk', {
+            'watch_sec': 10.0,
+            'alert_sec': 20.0,
+            'fall_sec': 2.0,
+            'squat_sec': 15.0,
+            'absent_sec': 15.0,
+            'absent_alert_sec': 30.0,
+            'recover_sec': 30.0,
+            'cooldown_sec': 300.0,
+            'night_check_hour': 20.0,
+        })
+        for k, v in cfg.items():
+            self.declare_parameter(k, float(v))
 
         def g(name):
             return float(self.get_parameter(name).value)
@@ -59,6 +65,12 @@ class RiskManager(Node):
 
         self.get_logger().info('风险状态机节点启动：订阅 /vision/analysis，'
                                '发布 /monitor/alert 与 /monitor/state')
+        self.get_logger().info(
+            '生效阈值(来自 config.yaml，-p 可覆盖)：'
+            f'跌倒<{g("fall_sec"):.0f}s 久蹲<{g("squat_sec"):.0f}s '
+            f'关注<{g("watch_sec"):.0f}s 高危<{g("alert_sec"):.0f}s '
+            f'无人<{g("absent_sec"):.0f}s 恢复<{g("recover_sec"):.0f}s '
+            f'冷却<{g("cooldown_sec"):.0f}s')
 
     def on_analysis(self, msg: String):
         try:

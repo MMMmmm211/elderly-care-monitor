@@ -147,6 +147,41 @@ stop_all.bat
 
 > 注意：`supervisor.py` / `start_all.bat` 内的 ROS2 安装路径、Python 路径需按本机环境调整。摄像头源默认 `0`（本机摄像头），可用环境变量 `CAMERA_SOURCE` 覆盖为视频文件。
 
+### 参数配置（config.yaml）
+
+所有阈值与开关集中在根目录 `config.yaml`，改完重启即可生效，不用动代码：
+
+```yaml
+vision:
+  analyze_interval: 0.2     # 姿态分析节流，0.2 = 每秒 5 帧
+  use_llava: false          # 慢速 VLM 上下文通路（开=更准但更慢更费显存）
+  log_interval: 60.0        # 静默日志心跳间隔，0 = 只在状态变化时打
+  log_stable_sec: 3.0       # 新状态稳定多久才记一行（防单帧抖动刷屏）
+  verbose_log: false        # true = 每帧都打日志，仅排查时开
+
+risk:
+  fall_sec: 2.0             # 连续 2s 躺下 -> 立即告警
+  squat_sec: 15.0           # 连续 15s 蹲着 -> 告警
+  watch_sec: 10.0           # 连续 10s 中风险 -> 关注
+  alert_sec: 20.0           # 连续 20s 高风险 -> 告警
+  absent_sec: 15.0          # 连续 15s 无人 -> 判定无人（去抖）
+  recover_sec: 30.0         # 连续 30s 回落 -> 恢复
+  cooldown_sec: 300.0       # 同类告警冷却，调大 = 更安静
+
+review:
+  model: qwen2.5vl:7b
+  pending_email_interval: 300.0   # 「复核未定」邮件节流
+
+supervisor:
+  stable_seconds: 60
+  max_log_mb: 5             # 单个日志超过 5MB 自动轮转成 .log.1
+  restart_delay: 5.0
+```
+
+优先级：**命令行 `--ros-args -p 名字:=值` > `config.yaml` > 代码内默认值**。节点启动时会把生效阈值打进日志（如 `生效阈值(来自 config.yaml，-p 可覆盖)：跌倒<2s ...`），方便确认到底用了哪一套。
+
+配置文件路径可用环境变量 `MONITOR_CONFIG` 指向别处。
+
 ### Web 界面
 - 桌面端：`http://本机IP:5000`
 - 手机端：`http://本机IP:5000/mobile`

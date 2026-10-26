@@ -37,22 +37,31 @@ OLLAMA_URL = 'http://localhost:11434/api/tags'
 # Ollama 模型目录已迁到 E 盘，避免 C 盘告急；用户级环境变量已设，这里兜底
 os.environ.setdefault('OLLAMA_MODELS', r'E:\ollama-models')
 
+from app_config import section as cfg_section, config_path
+
+# 守护参数统一从 config.yaml 的 supervisor 段读取
+_sup = cfg_section('supervisor', {
+    'stable_seconds': 60,
+    'max_log_mb': 5,
+    'restart_delay': 5.0,
+})
+
 # 进程稳定运行这么久后，连续崩溃计数归零（避免永远退避）
-STABLE_SECONDS = 60
+STABLE_SECONDS = float(_sup['stable_seconds'])
 
 # 单个服务日志超过这个体积就轮转，防止 vision 这种高频日志把磁盘吃满
-MAX_LOG_BYTES = 5 * 1024 * 1024
+MAX_LOG_BYTES = int(float(_sup['max_log_mb']) * 1024 * 1024)
+
+# 崩溃后重启延迟基准（连续崩溃会翻倍退避）
+RESTART_DELAY = float(_sup['restart_delay'])
 
 # (名称, 命令列表, 是否需要 source ROS2 环境)
 SERVICES = [
     ('video_publisher',
      ['python', 'video_publisher.py', '--ros-args', '-p', f"source:='{CAMERA_SOURCE}'", '-p', 'fps:=5.0'],
      True),
-    ('vision_analysis',
-     ['python', 'vision_analysis_node.py', '--ros-args',
-      '-p', 'use_llava:=false', '-p', 'use_temporal_fall:=true',
-      '-p', 'analyze_interval:=0.2'],
-     True),
+    # 视觉节点的参数全部来自 config.yaml 的 vision 段，这里不再硬编码 -p
+    ('vision_analysis', ['python', 'vision_analysis_node.py'], True),
     ('risk_manager', ['python', 'elderly_monitor/nodes/risk_manager.py'], True),
     ('alert_delivery', ['python', 'alert_delivery_node.py'], True),
     ('review_agent', ['python', 'review_agent_node.py'], True),
@@ -249,7 +258,7 @@ class Supervisor:
                 if p.poll() is not None:  # 进程已退出
                     if name not in self.next_retry:
                         self.backoff[name] = self.backoff.get(name, 0) + 1
-                        delay = min(5 * self.backoff[name], 60)
+                        delay = min(RESTART_DELAY * self.backoff[name], 60)
                         self.next_retry[name] = now + delay
                         print(f'[supervisor] {name} 已退出（第 {self.backoff[name]} 次），'
                               f'{delay}s 后重启')

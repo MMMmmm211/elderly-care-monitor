@@ -76,11 +76,17 @@ class ReviewAgent(Node):
     def __init__(self):
         super().__init__('review_agent')
 
-        self.declare_parameter('model', 'qwen2.5vl:7b')
+        # 参数统一从 config.yaml 的 review 段读取；命令行 -p 仍可覆盖
+        from app_config import section
+        cfg = section('review', {'model': 'qwen2.5vl:7b',
+                                 'pending_email_interval': self._PENDING_EMAIL_INTERVAL})
+        self.declare_parameter('model', str(cfg['model']))
 
         self._q = queue.Queue()
         model = self.get_parameter('model').value
         self._llava = OllamaAnalyzer(model=model, system_prompt=REVIEW_PROMPT)
+        # 「复核未定」邮件节流间隔（秒）
+        self._pending_interval = float(cfg['pending_email_interval'])
 
         self.create_subscription(String, 'monitor/review_request', self.on_request, 10)
 
@@ -191,7 +197,7 @@ class ReviewAgent(Node):
         import time as _time
         now = _time.time()
         last = getattr(self, '_last_pending_at', 0.0)
-        if now - last < self._PENDING_EMAIL_INTERVAL:
+        if now - last < getattr(self, '_pending_interval', self._PENDING_EMAIL_INTERVAL):
             self.get_logger().info('[审核] 复核未定邮件处于节流窗口，跳过')
             return
         settings = database.get_all_settings()

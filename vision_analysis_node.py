@@ -40,20 +40,35 @@ class VisionAnalysisNode(Node):
     def __init__(self):
         super().__init__('vision_analysis_node')
 
-        self.declare_parameter('analyze_interval', 0.2)   # 秒，姿态分析节流间隔（快速通路，5fps 下每帧分析）
-        self.declare_parameter('model', 'llava:7b')
-        self.declare_parameter('use_llava', False)
-        self.declare_parameter('llava_interval', 12.0)    # 秒，llava 上下文刷新间隔（慢速通路）
-        self.declare_parameter('use_temporal_fall', False)  # 时间跌落特征默认关，需调阈值后开启
+        # 参数统一从 config.yaml 的 vision 段读取；命令行 -p 仍可覆盖
+        from app_config import section
+        cfg = section('vision', {
+            'analyze_interval': 0.2,
+            'model': 'llava:7b',
+            'use_llava': False,
+            'llava_interval': 12.0,
+            'use_temporal_fall': False,
+            'log_interval': 60.0,
+            'verbose_log': False,
+        })
+        self.declare_parameter('analyze_interval', float(cfg['analyze_interval']))
+        self.declare_parameter('model', str(cfg['model']))
+        self.declare_parameter('use_llava', bool(cfg['use_llava']))
+        self.declare_parameter('llava_interval', float(cfg['llava_interval']))
+        self.declare_parameter('use_temporal_fall', bool(cfg['use_temporal_fall']))
         # 日志策略：平时静默，只在状态变化时打一行；log_interval 秒发一次心跳（0=只打变化）
-        self.declare_parameter('log_interval', 60.0)
-        self.declare_parameter('verbose_log', False)       # True=每帧都打（排查用）
+        self.declare_parameter('log_interval', float(cfg['log_interval']))
+        self.declare_parameter('verbose_log', bool(cfg['verbose_log']))
+        self.declare_parameter('log_stable_sec', float(cfg.get('log_stable_sec', 3.0)))
 
         self.interval = float(self.get_parameter('analyze_interval').value)
         self.log_interval = float(self.get_parameter('log_interval').value)
         self.verbose_log = bool(self.get_parameter('verbose_log').value)
+        self.log_stable_sec = float(self.get_parameter('log_stable_sec').value)
         self._last_log_t = 0.0
         self._last_log_key = None
+        self._pending_key = None
+        self._pending_since = 0.0
         self._frames = 0
         model = self.get_parameter('model').value
         use_llava = bool(self.get_parameter('use_llava').value)
@@ -112,17 +127,29 @@ class VisionAnalysisNode(Node):
             out.data = json.dumps(result, ensure_ascii=False)
             self.publisher.publish(out)
 
-            # 静默日志：只在状态变化时发一行；否则按 log_interval 发心跳
+            # 静默日志：状态变化去抖后打一行；否则按 log_interval 发心跳
             self._frames += 1
             key = (result.get('possible_risk'), result.get('activity'),
                    result.get('location'), bool(result.get('temporal_fall')))
             now = time.time()
             changed = key != self._last_log_key
+            # 去抖：MediaPipe 偶发漏检单帧，会让 activity 在「站立/无人」间抖动，
+            # 新状态必须持续 log_stable_sec 秒才认定为真的变化
+            if changed:
+                if key != self._pending_key:
+                    self._pending_key = key
+                    self._pending_since = now
+                    changed = False
+                elif now - self._pending_since < self.log_stable_sec:
+                    changed = False
+            else:
+                self._pending_key = None
             heartbeat = self.log_interval > 0 and (now - self._last_log_t) >= self.log_interval
             if changed or heartbeat:
                 n = self._frames
                 self._frames = 0
-                self._last_log_key = key
+                self._last_log_key = key if changed else self._last_log_key
+                self._pending_key = None
                 self._last_log_t = now
                 tag = '状态变化' if changed else '心跳'
                 self.get_logger().info(

@@ -1,0 +1,34 @@
+﻿# ============================================================
+#  养老监护预警系统 · 统一配置
+#  优先级：命令行 --ros-args -p 名字:=值  >  本文件  >  代码内默认值
+#  改完重启 start_all.bat 生效（配置在进程启动时读取一次）
+# ============================================================
+
+vision:                       # 视觉分析节点（快速通路）
+  analyze_interval: 0.2       # 秒，姿态分析节流间隔。0.2 = 每秒 5 帧
+  use_llava: false            # 慢速 VLM 上下文通路，默认关（省 Token、省显存）
+  llava_interval: 12.0        # 秒，VLM 上下文刷新间隔
+  use_temporal_fall: true     # 时间维度跌倒特征（需配合调好的阈值）
+  log_interval: 60.0          # 秒，静默日志心跳间隔；设 0 = 只在状态变化时打日志
+  log_stable_sec: 3.0           # 秒，新状态要稳定这么久才记一行日志（防单帧抖动刷屏）
+  verbose_log: false          # true = 每帧都打日志（只在排查问题时开）
+
+risk:                         # 风险状态机
+  watch_sec: 10.0             # 连续 10s 风险>=中 -> 进入「关注」
+  alert_sec: 20.0             # 连续 20s 风险=高 -> 告警
+  fall_sec: 2.0               # 连续 2s 躺下/跌倒 -> 立即告警
+  squat_sec: 15.0             # 连续 15s 蹲着 -> 告警（老人久蹲起不来）
+  absent_sec: 15.0            # 连续 15s 无人 -> 判定无人（去抖，防 llava 漏检）
+  absent_alert_sec: 30.0      # 保留字段：无人告警已由「夜间无人提示」取代
+  recover_sec: 30.0           # 连续 30s 风险回落 -> 恢复正常
+  cooldown_sec: 300.0         # 同类告警冷却 5 分钟，防刷屏（调大 = 更安静）
+  night_check_hour: 20.0      # 夜间无人检查的起始小时（20 点后仍无人 -> 提示归家）
+
+review:                       # 二次审核智能体（VLM）
+  model: qwen2.5vl:7b
+  pending_email_interval: 300.0   # 秒，「复核未定」邮件节流间隔
+
+supervisor:                   # 进程守护
+  stable_seconds: 60          # 稳定运行超过这个秒数，崩溃计数清零
+  max_log_mb: 5               # 单个服务日志超过多少 MB 自动轮转成 .log.1
+  restart_delay: 5.0          # 秒，崩溃后重启延迟（连续崩溃会指数退避）
