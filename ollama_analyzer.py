@@ -41,6 +41,8 @@ _FAILSAFE_RESULT = {
     "need_followup": True,
     "confidence": 0.0,
     "explanation": "视觉分析失败，保守判定为高风险",
+    # 显式标记「模型没给出判断」，供下游区分「真的判高风险」与「压根没看」
+    "analysis_failed": True,
 }
 
 
@@ -201,6 +203,7 @@ class OllamaAnalyzer:
         obs["body_state"] = body
         obs["possible_risk"] = risk
         obs["need_followup"] = followup
+        obs["analysis_failed"] = False
         return obs
 
     @retry(max_retries=3, delay=1.5)

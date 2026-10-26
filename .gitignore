@@ -23,6 +23,8 @@ __pycache__/
 *.pyo
 supervisor.stop
 *.log
+*.log.err
+logs/
 
 # ============ Python ============
 *.egg-info/

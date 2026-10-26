@@ -149,17 +149,29 @@ class AlertDeliveryNode(Node):
             frame = None if self._latest_frame is None else self._latest_frame.copy()
 
         screenshot_path = ''
+        review_path = ''      # 送二次审核的「干净图」：不带任何文字水印
         if frame is not None:
             a = self._latest_analysis
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # 先存一张原图给二次审核用。带水印的图会把「[高] 跌倒…活动=躺下 位置=地面」
+            # 直接写在画面上，VLM 只会照着抄——等于自己批自己，复核就失去意义。
+            raw_path = os.path.join(ALERT_DIR, f'raw_{ts}.jpg')
+            try:
+                cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])[1].tofile(raw_path)
+                review_path = raw_path
+            except Exception as e:
+                self.get_logger().warn(f'[投递] 干净图写入失败，复核回退用带水印图: {e}')
+
             annotated = draw_alert_overlay(
                 frame, risk, desc,
                 a.get('activity', ''), a.get('location', ''),
                 a.get('expression', ''), a.get('body_state', ''))
-            fname = f'alert_{datetime.now().strftime("%Y%m%d_%H%M%S")}.png'
-            screenshot_path = os.path.join(ALERT_DIR, fname)
+            screenshot_path = os.path.join(ALERT_DIR, f'alert_{ts}.png')
             # 用 imencode 写图：兼容含中文的真实路径（OpenCV imwrite 打不开中文路径）
             cv2.imencode('.png', annotated)[1].tofile(screenshot_path)
-            self.get_logger().info(f'[投递] 已截图 {screenshot_path}')
+            self.get_logger().info(f'[投递] 已截图 {screenshot_path}'
+                                   + (f'（复核用干净图 {review_path}）' if review_path else ''))
         else:
             self.get_logger().warn('[投递] 尚无相机帧，跳过截图')
 
@@ -188,9 +200,16 @@ class AlertDeliveryNode(Node):
             self._last_email_at[alert_type] = now
             self._email_pool.submit(self._send_email_bg, alert_id, evt, screenshot_path, a)
 
-        # 4) 发起二次审核（仅跌倒/高风险需要 llava 复核；无人告警由轻提醒直接兜底）
-        if alert_type in ('fall', 'high_risk') and screenshot_path:
-            self._publish_review_request(alert_id, screenshot_path, evt, a, risk)
+        # 4) 发起二次审核
+        # 跌倒/高风险：判断姿势与接触面（是否真跌倒）
+        # 无人类：判断画面里到底有没有人（防漏检）——但按发信节流频率送审，避免堆积
+        if screenshot_path:
+            if alert_type in ('fall', 'high_risk'):
+                self._publish_review_request(alert_id, review_path or screenshot_path,
+                                             evt, a, risk, display_path=screenshot_path)
+            elif alert_type in ('absent', 'night_absent') and not throttle_email:
+                self._publish_review_request(alert_id, review_path or screenshot_path,
+                                             evt, a, risk, display_path=screenshot_path)
 
     # 告警类型 -> 中文标签（用于邮件主题）
     _TYPE_LABEL = {'fall': '跌倒', 'high_risk': '高风险', 'absent': '无人',
@@ -210,20 +229,34 @@ class AlertDeliveryNode(Node):
         a = a or {}
         summary = (f"活动={a.get('activity', '')}  位置={a.get('location', '')}  "
                    f"表情={a.get('expression', '')}  肢体={a.get('body_state', '')}")
+        # 承诺什么就要兑现什么：只有真的会送二次审核的告警类型才提复核
+        atype = evt.get('alert_type', '')
+        if atype in ('fall', 'high_risk'):
+            tail = ("（系统随即进行二次智能复核：能确认会再发一封「确认」邮件；"
+                    "画面信息不足以下结论，会发一封「复核未定」邮件说明原因。）")
+        elif atype in ('absent', 'night_absent'):
+            tail = "（系统会再看一眼画面做复核：若发现其实有人，会立刻再通知你。）"
+        else:
+            tail = ""
         return (
             f"发生时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"初步检测：{evt.get('description', '检测到老人异常')}\n"
             f"智能分析：{summary}\n\n"
             "请查看附件照片，自行判断是否需要立即拨打急救电话。\n"
-            "（系统正在进行二次智能复核，确认后将会再次提醒。）"
+            + tail
         )
 
-    def _publish_review_request(self, alert_id, screenshot_path, evt, a, risk):
-        """把告警打包成二次审核请求，交给 review_agent 节点。"""
+    def _publish_review_request(self, alert_id, screenshot_path, evt, a, risk, display_path=''):
+        """把告警打包成二次审核请求，交给 review_agent 节点。
+
+        screenshot_path 是「干净图」（无水印），只给 VLM 看；
+        display_path 是带水印的图，用于复核邮件的附件和 Web 展示。
+        """
         import json
         req = {
             'alert_id': alert_id,
             'screenshot_path': screenshot_path,
+            'display_path': display_path or screenshot_path,
             'alert_type': evt.get('alert_type', ''),
             'risk_level': risk,
             'description': evt.get('description', ''),
