@@ -43,6 +43,7 @@ class RiskStateMachine:
         recover_sec: float = 30.0,        # 连续 K 秒 风险回落 -> 恢复 NORMAL
         cooldown_sec: float = 300.0,      # 同类告警冷却，避免刷屏
         night_check_hour: float = 20.0,   # 晚上几点后无人做提示（每天一次）
+        cond_hold_sec: float = 3.0,       # 候选条件短暂中断的容忍时长（迟滞，防抖动重置计时）
     ):
         self.watch_sec = watch_sec
         self.alert_sec = alert_sec
@@ -53,11 +54,13 @@ class RiskStateMachine:
         self.recover_sec = recover_sec
         self.cooldown_sec = cooldown_sec
         self.night_check_hour = night_check_hour
+        self.cond_hold_sec = cond_hold_sec
 
         self.state = RiskState.NORMAL
         self._state_since = time.time()              # 进入当前状态的时间
         self._cond_since = time.time()               # 当前「候选风险条件」持续多久
         self._cond = None                            # 当前候选条件标签（用于条件切换时重置计时）
+        self._cond_last_seen = time.time()           # 当前候选条件最后一次被确认的时间
         self._absent_since: Optional[float] = None   # 开始无人的时间
         self._last_alert_at: dict = {}  # alert_type -> 上次告警时间（按类型冷却）
         self._night_notified = None     # 上次夜间无人提示的「年内第几天」，用于每天一次
@@ -68,21 +71,38 @@ class RiskStateMachine:
         self._state_since = now
         self._cond_since = now
         self._cond = None
+        self._cond_last_seen = now
 
     def _held(self, now: float, threshold: float) -> bool:
         """当前候选条件是否已持续超过 threshold 秒"""
         return now - self._cond_since >= threshold
 
     def _set_cond(self, cond: str, now: float) -> None:
-        """切换候选条件：仅在条件标签变化时重置计时起点。
+        """切换候选条件，并对「短暂中断」做迟滞处理。
 
-        关键修正：去抖时长必须是「当前条件」的真实持续时长。
+        背景：单帧姿态检测会抖（蹲/坐/站之间来回跳），条件一变化就清零计时，
+        会让 `squat_sec=15s` 这种长阈值永远凑不满（实测最长连续蹲只有 8.4s）。
+
+        规则：条件短暂离开、并在 cond_hold_sec 秒内回到同一个条件，视为抖动，
+        计时不清零，继续累加；离开超过 cond_hold_sec 才真正切换并从
+        「新条件实际开始的那一刻」重新计时。
+
+        关键修正（保留）：去抖时长必须是「当前条件」的真实持续时长。
         旧实现只在『正常』分支重置 _cond_since，导致「行走→躺下」这种
         条件切换时，第一次躺下就继承了行走阶段遗留的旧时间戳，从而
         立刻触发告警（表现为 duration_sec=0 的假阳性）。"""
-        if cond != self._cond:
-            self._cond = cond
-            self._cond_since = now
+        if cond == self._cond:
+            self._cond_last_seen = now
+            return
+
+        # 条件变了：若上一个条件还没「断太久」，判为抖动，保持原计时不动
+        if self._cond is not None and (now - self._cond_last_seen) <= self.cond_hold_sec:
+            return
+
+        # 真正切换：计时起点取「上一次见到旧条件的时刻」，把容忍窗口补回来
+        self._cond = cond
+        self._cond_since = self._cond_last_seen if self._cond_last_seen else now
+        self._cond_last_seen = now
 
     def _risk_for_state(self) -> str:
         return {

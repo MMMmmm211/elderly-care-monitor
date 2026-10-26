@@ -40,6 +40,7 @@ class RiskManager(Node):
             'recover_sec': 30.0,
             'cooldown_sec': 300.0,
             'night_check_hour': 20.0,
+            'cond_hold_sec': 3.0,
         })
         for k, v in cfg.items():
             self.declare_parameter(k, float(v))
@@ -57,6 +58,7 @@ class RiskManager(Node):
             recover_sec=g('recover_sec'),
             cooldown_sec=g('cooldown_sec'),
             night_check_hour=g('night_check_hour'),
+            cond_hold_sec=g('cond_hold_sec'),
         )
 
         self.sub = self.create_subscription(String, 'vision/analysis', self.on_analysis, 10)

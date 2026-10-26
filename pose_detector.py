@@ -140,9 +140,26 @@ class PoseDetector:
 
         lm = res.pose_landmarks[0]
 
-        # 关键点可见度
-        vis = [min(1.0, lm[i].visibility) for i in _KEY_IDS]
+        # ===== 关键点可见度（画面外的点一律视为不可见）=====
+        # MediaPipe 即使关键点落在画面外也会给坐标和很高 confidence（它是对
+        # 局部线索的外推）。如果不做这个过滤，空画面会被判成「站立/坐着」，
+        # 蹲/坐判定也会在两条外推坐标之间乱跳。
+        def _v(idx):
+            p = lm[idx]
+            in_frame = (0.0 <= p.x <= 1.0) and (0.0 <= p.y <= 1.0)
+            return min(1.0, p.visibility) if in_frame else 0.0
+
+        vis = [_v(i) for i in _KEY_IDS]
         visible_ratio = float(np.mean(vis)) if vis else 0.0
+
+        sh_vis = min(_v(K["L_shoulder"]), _v(K["R_shoulder"]))
+        hip_vis = min(_v(K["L_hip"]), _v(K["R_hip"]))
+        leg_vis = min(_v(K["L_knee"]), _v(K["R_knee"]),
+                      _v(K["L_ankle"]), _v(K["R_ankle"]))
+        # 肩+髋都在画面内，躯干朝向（躺/斜/竖直）才可信
+        torso_ok = sh_vis >= 0.5 and hip_vis >= 0.5
+        # 膝+踝都在画面内，站/蹲/坐三者才分得开
+        leg_ok = leg_vis >= 0.4
 
         # 2D 特征
         sx, sy = _mid2d(lm, K["L_shoulder"], K["R_shoulder"])
@@ -160,11 +177,14 @@ class PoseDetector:
         aspect_ratio = bbox_h / bbox_w if bbox_w > 1e-3 else 0.0
         body_bottom = max(ys)
 
-        person_present = visible_ratio >= self.min_visibility
+        # 有人在画面里：以「双肩可见」为主要证据（肩是最稳的躯干点），
+        # 不再用 8 个关键点的平均值 + 0.15 的低门槛（那样两个肩就能蒙混过关）
+        person_present = sh_vis >= 0.5 or visible_ratio >= 0.55
 
         # ===== 3D 世界坐标（主信号）=====
         vertical_fraction = None
-        if res.pose_world_landmarks:
+        leg_ratio_3d = None
+        if res.pose_world_landmarks and torso_ok:
             wl = res.pose_world_landmarks[0]
             wsx, wsy, wsz = _mid3d(wl, K["L_shoulder"], K["R_shoulder"])
             whx, why, whz = _mid3d(wl, K["L_hip"], K["R_hip"])
@@ -179,7 +199,10 @@ class PoseDetector:
 
         # 姿态判定
         if not person_present:
-            activity, expl = "无人", "关键点可见度过低"
+            activity, expl = "无人", "画面内没有可见的人体关键点"
+        elif not torso_ok:
+            activity = "其他"
+            expl = f"只有肩部可见(肩{sh_vis:.2f}/髋{hip_vis:.2f})，躯干朝向无法判定"
         elif vertical_fraction is not None:
             if vertical_fraction < self.lie_vfrac:
                 activity = "躺下"
@@ -187,7 +210,7 @@ class PoseDetector:
             elif vertical_fraction < self.lean_vfrac:
                 activity = "其他"
                 expl = f"躯干3D倾斜(竖直占比{vertical_fraction:.2f})，斜靠/过渡"
-            else:
+            elif leg_ok and leg_ratio_3d is not None:
                 if leg_ratio_3d > self.stand_leg_ratio:
                     activity = "站立"
                     expl = f"躯干3D竖直(占比{vertical_fraction:.2f})，腿伸直"
@@ -197,6 +220,11 @@ class PoseDetector:
                 else:
                     activity = "坐着"
                     expl = f"躯干3D竖直(占比{vertical_fraction:.2f})，腿弯曲"
+            else:
+                # 腿不在画面里：站/蹲/坐三者物理上分不开，只能判「躯干竖直」
+                activity = "站立"
+                expl = (f"躯干3D竖直(占比{vertical_fraction:.2f})，"
+                        f"但腿部不可见(膝踝可见度{leg_vis:.2f})，不区分站/坐/蹲")
         else:
             # 2D 兜底
             if torso_angle > self.lie_angle:
@@ -205,11 +233,14 @@ class PoseDetector:
             elif torso_angle > self.lean_angle:
                 activity = "其他"
                 expl = f"躯干2D倾斜({torso_angle:.0f}°)"
-            else:
+            elif leg_ok:
                 leg_span = abs(ay - hy)
                 leg_ratio = leg_span / torso_len_2d if torso_len_2d > 1e-3 else 0.0
                 activity = "站立" if leg_ratio > 0.85 else "坐着"
-                expl = f"躯干2D竖直({torso_angle:.0f}°)"
+                expl = f"躯干2D竖直({torso_angle:.0f}°)，髋踝比{leg_ratio:.2f}"
+            else:
+                activity = "站立"
+                expl = f"躯干2D竖直({torso_angle:.0f}°)，腿部不可见，不区分站/坐/蹲"
 
         conf = float(np.clip(visible_ratio, 0.0, 1.0))
         return PoseResult(
