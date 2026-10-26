@@ -40,6 +40,9 @@ os.environ.setdefault('OLLAMA_MODELS', r'E:\ollama-models')
 # 进程稳定运行这么久后，连续崩溃计数归零（避免永远退避）
 STABLE_SECONDS = 60
 
+# 单个服务日志超过这个体积就轮转，防止 vision 这种高频日志把磁盘吃满
+MAX_LOG_BYTES = 5 * 1024 * 1024
+
 # (名称, 命令列表, 是否需要 source ROS2 环境)
 SERVICES = [
     ('video_publisher',
@@ -112,7 +115,17 @@ class Supervisor:
     # ---------- 日志 ----------
     def _open_log(self, name):
         os.makedirs(LOG_DIR, exist_ok=True)
-        f = open(os.path.join(LOG_DIR, f'{name}.log'), 'ab', buffering=0)
+        path = os.path.join(LOG_DIR, f'{name}.log')
+        # 轮转：超过 MAX_LOG_MB 就把旧日志改名成 <name>.log.1（只保留一份历史）
+        try:
+            if os.path.exists(path) and os.path.getsize(path) > MAX_LOG_BYTES:
+                bak = f'{path}.1'
+                if os.path.exists(bak):
+                    os.remove(bak)
+                os.replace(path, bak)
+        except Exception as e:
+            print(f'[supervisor] 日志轮转失败 {name}: {e}')
+        f = open(path, 'ab', buffering=0)
         f.write(f'\n===== {datetime.now():%Y-%m-%d %H:%M:%S} 启动 {name} =====\n'.encode('utf-8'))
         self.logs[name] = f
         return f

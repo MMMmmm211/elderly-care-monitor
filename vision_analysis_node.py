@@ -45,8 +45,16 @@ class VisionAnalysisNode(Node):
         self.declare_parameter('use_llava', False)
         self.declare_parameter('llava_interval', 12.0)    # 秒，llava 上下文刷新间隔（慢速通路）
         self.declare_parameter('use_temporal_fall', False)  # 时间跌落特征默认关，需调阈值后开启
+        # 日志策略：平时静默，只在状态变化时打一行；log_interval 秒发一次心跳（0=只打变化）
+        self.declare_parameter('log_interval', 60.0)
+        self.declare_parameter('verbose_log', False)       # True=每帧都打（排查用）
 
         self.interval = float(self.get_parameter('analyze_interval').value)
+        self.log_interval = float(self.get_parameter('log_interval').value)
+        self.verbose_log = bool(self.get_parameter('verbose_log').value)
+        self._last_log_t = 0.0
+        self._last_log_key = None
+        self._frames = 0
         model = self.get_parameter('model').value
         use_llava = bool(self.get_parameter('use_llava').value)
         self.llava_interval = float(self.get_parameter('llava_interval').value)
@@ -104,10 +112,28 @@ class VisionAnalysisNode(Node):
             out.data = json.dumps(result, ensure_ascii=False)
             self.publisher.publish(out)
 
-            self.get_logger().info(
-                f'分析({cost*1000:.0f}ms) risk={result.get("possible_risk")} '
-                f'activity={result.get("activity")} loc={result.get("location")} '
-                f'fall={result.get("temporal_fall")} followup={result.get("need_followup")}')
+            # 静默日志：只在状态变化时发一行；否则按 log_interval 发心跳
+            self._frames += 1
+            key = (result.get('possible_risk'), result.get('activity'),
+                   result.get('location'), bool(result.get('temporal_fall')))
+            now = time.time()
+            changed = key != self._last_log_key
+            heartbeat = self.log_interval > 0 and (now - self._last_log_t) >= self.log_interval
+            if changed or heartbeat:
+                n = self._frames
+                self._frames = 0
+                self._last_log_key = key
+                self._last_log_t = now
+                tag = '状态变化' if changed else '心跳'
+                self.get_logger().info(
+                    f'[{tag}] risk={result.get("possible_risk")} '
+                    f'activity={result.get("activity")} loc={result.get("location")} '
+                    f'fall={result.get("temporal_fall")} followup={result.get("need_followup")} '
+                    f'({cost*1000:.0f}ms/帧, 累计{n}帧)')
+            elif self.verbose_log:
+                self.get_logger().debug(
+                    f'分析({cost*1000:.0f}ms) risk={result.get("possible_risk")} '
+                    f'activity={result.get("activity")} loc={result.get("location")}')
         except Exception as e:
             self.get_logger().warn(f'姿态分析失败: {e}')
         finally:
