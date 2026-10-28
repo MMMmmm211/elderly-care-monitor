@@ -6,6 +6,13 @@
 
 > 关键词：ROS2 Humble · 多节点分布式 · MediaPipe PoseLandmarker 3D · Ollama / qwen2.5vl / llava · 状态机 · 防误报 · 进程守护自愈
 
+![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)
+![ROS2](https://img.shields.io/badge/ROS2-Humble-22314E?logo=ros&logoColor=white)
+![MediaPipe](https://img.shields.io/badge/MediaPipe-PoseLandmarker-0097A7)
+![Ollama](https://img.shields.io/badge/Ollama-local%20inference-000000)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Runs offline](https://img.shields.io/badge/Data-never%20leaves%20the%20machine-brightgreen)
+
 ---
 
 ## 一、系统架构
@@ -44,6 +51,37 @@
 
 **5 个 ROS2 节点 + 1 个 Web 服务**，通过 `std_msgs/String + JSON` 传输类型化消息（`PersonStatus` / `AlertEvent`），感知与决策分离。
 
+### 数据流（Mermaid，GitHub 可直接渲染）
+
+```mermaid
+flowchart TD
+    CAM["摄像头 / 视频源"] --> VP["video_publisher<br/>/camera/image @5fps"]
+
+    VP --> VA["vision_analysis_node<br/>快通路：MediaPipe 3D 几何 几十ms/帧<br/>慢通路：VLM 语义 秒级、后台低频"]
+    VA -->|"/vision/analysis<br/>PersonStatus"| RM["risk_manager<br/>风险状态机 + 迟滞去抖"]
+
+    RM -->|"/monitor/state"| WEB["web_ui (Flask)<br/>实时状态面板"]
+    RM -->|"/monitor/alert<br/>AlertEvent"| AD["alert_delivery_node<br/>无水印原图 + 水印图 + 落库"]
+
+    AD -->|"/monitor/review_request<br/>原图 + 元数据"| RA["review_agent_node<br/>VLM 二次审核"]
+    RA -->|"地面 → 已确认"| MAIL["SMTP 正式邮件（家属）"]
+    RA -->|"床/沙发 → 已排除"| DROP["不发邮件"]
+    RA -->|"模态不足 → 待复核"| PEND["复核未定邮件（300s 节流）"]
+
+    AD --> DB[("SQLite WAL<br/>alerts 表")]
+    RA --> DB
+    WEB --> DB
+
+    SUP["supervisor.py<br/>守护 + 指数退避 + Ollama 看门狗"] -.-> VP
+    SUP -.-> VA
+    SUP -.-> RM
+    SUP -.-> AD
+    SUP -.-> RA
+    SUP -.-> WEB
+```
+
+**三态审核判决**是防误报的核心：`已确认`（发正式邮件）/ `已排除`（正常休息，不发）/ `待复核`（模型自认看不清，转人工，节流发信）。判不了就说判不了，而不是硬给一个结论。
+
 ---
 
 ## 二、核心亮点
@@ -75,6 +113,25 @@ NORMAL ──画面持续无人──► ABSENT（夜间 20:00 后每日提醒�
 - **阻塞 IO 异步化**：SMTP 邮件走 `ThreadPoolExecutor` 后台线程，不卡 ROS2 回调。
 - **邮件失败重试自愈**：每 60s 扫描未发送成功的告警，最多重试 3 次。
 - **并发友好数据层**：SQLite WAL 模式，每次操作独立连接，支持 Web 与 ROS2 节点多进程读写。
+
+---
+
+## 二之一、从失败到防护机制
+
+监控系统的价值不在于「能检测到」，而在于「出错时不会骗人」。下面每一条都是一次真实事故，
+以及它被转化成的长期机制——不是修完就算，而是让同类失败不可能再以同样方式发生。
+
+| # | 现象 | 根因 | 转化成的防护机制 | 验证 |
+|---|---|---|---|---|
+| 1 | 空房间被判「站立」，`absent ↔ normal` 每几十秒反复跳 | MediaPipe 依据画面底边一点线索**外推出整副骨架**（肩部可见度 0.86，髋/膝/踝 y 坐标在画面外 1.9~3.1），旧逻辑用「8 点可见度均值 ≥ 0.15」判有人 | 关键点 **x/y 超出 [0,1] 一律按不可见**；`person_present` 改为**肩部可见度 ≥ 0.5**；新增 `torso_ok` / `leg_ok` 门控，腿不可见时**不猜站/坐/蹲** | 同一机位：`站立 / vis=0.23 / vfrac=0.98` → `无人 / 0.00 / 0.00` |
+| 2 | 状态在「蹲着/坐着」间抖动，告警时有时无 | 单帧噪声，1200 帧内 activity 跳变 **92 次**（每 2.6 s 一次）；真蹲着被切成 40 段、最长仅 8.4 s，永远够不到 15 s 阈值 | 条件判定加**迟滞 `cond_hold_sec = 3.0`**：条件短暂跳走 ≤3 s 内回来不清零、继续累加 | 回放同一 1200 帧序列：久蹲告警 **0 次 → 1 次** |
+| 3 | 凌晨服务全部失联，**14 小时无新告警入库**，只剩 6 个孤儿进程 | Ollama 桌面端 `auto_update_enabled=1`，静默执行 `OllamaSetup.exe /VERYSILENT /FORCECLOSEAPPLICATIONS` **强杀推理服务**再升级（`upgrade.log` 停在 0 字节） | 关闭自动更新 + 锁死模型目录；`supervisor.py` 重写：Ollama 前置健康检查、子进程日志落盘、**非阻塞指数退避**重启、绝对解释器路径、停机回收 Ollama | 7 个服务稳定运行，守护日志 0 次重启 |
+| 4 | 检测到异常，但 AI 二次审核从没给过结果 | 送审条件写成 `if alert_type in ('fall','high_risk')`，「无人」类告警**从不进审核**，`review_result` 永远为空 | 无人类型同样送审；送审改用**无水印原图**（此前送带水印截图，VLM 只是复读截图顶栏的结论，等于自己批自己） | 端到端 15 s 走完全链路并写库 |
+| 5 | 空房间发出「已确认跌倒」正式邮件 | VLM 位置永远给「未知」，落进 `else` 分支被判「已确认」 | **三态判决**：`未知` 不再等于 `已确认`，改判 `待复核` 并单独发「复核未定」邮件（300 s 节流） | 正常休息 16 段视频 32 帧，全部正确排除 |
+
+**第 1 条是这个项目最有价值的一课**：模型不是「漏检」,而是**非常自信地编造了画面外的身体**。
+它的输出在格式上完全合法（8 个关键点、合理置信度），只有把坐标本身纳入校验才能发现。
+结论：**概率模型的上游必须有确定性的物理约束**，而不是在下游用一个更好的模型去纠正它。
 
 ---
 
@@ -215,4 +272,4 @@ supervisor:
 
 ## 八、License
 
-个人作品项目，供学习与展示使用。
+MIT — 见 [LICENSE](./LICENSE)。个人作品项目，供学习与展示使用。
